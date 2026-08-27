@@ -2,12 +2,45 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import unicodedata
 
 from .ir import FmOperator, FmPatch
 from .ym2612 import patch_to_rym2612
 
 
 VOICE_SIZE = 32
+
+# PC-8801/MUCOM88 six-character voice-name glyph table. Bytes below 0x80
+# are ASCII; bytes 0x80.. are indexes into this table. This is the same
+# mapping used by the original MUCOM88 voice conversion ecosystem.
+_PC88_VOICE_CHARS = (
+    "▁▂▃▄▅▆▇█▏▎▍▌▋▊▉┼"
+    "┴┬┤├▔─│▕┌┐└┘╭╮╰╯"
+    " 。「」、・ヲァィゥェォャュョッ"
+    "ーアイウエオカキクケコサシスセソ"
+    "タチツテトナニヌネノハヒフヘホマ"
+    "ミムメモヤユヨラリルレロワン゛゜"
+    "═╞╪╡◢◣◥◤♠♥♦♣●○╱╲"
+    "╳円年月日時分秒        "
+)
+
+
+def _decode_voice_name(raw: bytes) -> str:
+    chars: list[str] = []
+    for byte in raw:
+        if byte == 0:
+            break
+        if byte < 0x80:
+            chars.append(chr(byte))
+        else:
+            index = byte - 0x80
+            chars.append(_PC88_VOICE_CHARS[index] if index < len(_PC88_VOICE_CHARS) else "�")
+    text = "".join(chars).rstrip().replace("゛", "\u3099").replace("゜", "\u309A")
+    return unicodedata.normalize("NFKC", unicodedata.normalize("NFC", text)).strip()
+
+
+def normalize_voice_name(name: str) -> str:
+    return unicodedata.normalize("NFKC", name).strip().casefold()
 
 
 def _op_offset(logical_zero_based: int) -> int:
@@ -30,12 +63,7 @@ class MucomVoice:
 
     @property
     def name(self) -> str:
-        # ASCII names are common and safe. Original PC-88 kana uses a custom
-        # glyph table; keep non-ASCII names deterministic rather than guessing.
-        raw = self.raw_name
-        if raw and all(0x20 <= b < 0x7F for b in raw):
-            return raw.decode("ascii")
-        return ""
+        return _decode_voice_name(self.raw_name)
 
     @property
     def display_name(self) -> str:
@@ -105,6 +133,26 @@ class MucomVoiceBank:
             MucomVoice(i // VOICE_SIZE, data[i:i + VOICE_SIZE])
             for i in range(0, len(data), VOICE_SIZE)
         ])
+
+    def by_program(self, program: int) -> MucomVoice:
+        if not 0 <= program < len(self.voices):
+            raise KeyError(program)
+        return self.voices[program]
+
+    def find_by_name(self, name: str) -> MucomVoice | None:
+        target = normalize_voice_name(name)
+        for voice in self.voices:
+            if normalize_voice_name(voice.name) == target:
+                return voice
+        return None
+
+    def resolve(self, program_or_name: int | str) -> MucomVoice:
+        if isinstance(program_or_name, int):
+            return self.by_program(program_or_name)
+        voice = self.find_by_name(program_or_name)
+        if voice is None:
+            raise KeyError(program_or_name)
+        return voice
 
     def export_rym2612(
         self,
