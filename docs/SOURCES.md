@@ -25,3 +25,20 @@ These are references/upstreams, not vendored dependencies unless explicitly stat
 
 ROMs, commercial game music, VGM packs, extracted PCM, and original MML are
 not committed here. The toolkit operates on user-supplied/local files.
+
+## RYM2612 preset format / MUCOM voices
+
+- `but80/mucom88torym2612` (MIT) documents and emits the native RYM2612 JUCE
+  XML state (`RYM2612Params`) from MUCOM88 32-byte `voice.dat` records.
+  `smd-music` uses the documented parameter mapping as a compatibility reference
+  but implements its own Python serializer/parser.
+- `ulalume/ym2612_format` independently parses `.rym2612` XML and documents
+  conversions for Algorithm, TL/D2L inversion, DT, MUL, AM, FMS/AMS and SSG-EG.
+  It is used as a cross-check for the generated preset semantics.
+
+## MUCOM88 JavaScript backend
+
+- `digital-sound-antiques/mucom88-js` is a JavaScript/WASM build of Open MUCOM88.
+  It exposes `Mucom88.compile(mml) -> Uint8Array` and is supported as an optional
+  external MUC-to-MUB backend. It is **not vendored** because it has its own
+  CC BY-NC-SA 4.0 license.
