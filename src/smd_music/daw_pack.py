@@ -7,7 +7,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from .vgm import VgmFile
-from .ym2612 import Ym2612State
+from .ym2612 import Ym2612State, patch_to_dmp, patch_to_tfi
 
 
 def extract_vgm_assets(vgm_path: str | Path, out_dir: str | Path) -> dict[str, object]:
@@ -15,6 +15,7 @@ def extract_vgm_assets(vgm_path: str | Path, out_dir: str | Path) -> dict[str, o
 
     Current assets:
     - deduplicated YM2612 patch snapshots (JSON), captured at key-on;
+    - .DMP and .TFI FM-patch files;
     - raw VGM PCM data-bank bytes;
     - an exact 44.1 kHz unsigned-8-bit DAC register timeline as WAV;
     - a provenance/manifest JSON.
@@ -65,7 +66,15 @@ def extract_vgm_assets(vgm_path: str | Path, out_dir: str | Path) -> dict[str, o
             wav.setframerate(44100)
             wav.writeframes(bytes(dac_audio))
 
-    patches = [asdict(p) for p in ym.patches.values()]
+    patch_dir = out / "fm_patches"
+    patch_dir.mkdir(exist_ok=True)
+    patch_objects = list(ym.patches.values())
+    for index, patch in enumerate(patch_objects, start=1):
+        stem = f"{index:02d}_{patch.id}"
+        (patch_dir / f"{stem}.tfi").write_bytes(patch_to_tfi(patch))
+        (patch_dir / f"{stem}.dmp").write_bytes(patch_to_dmp(patch))
+
+    patches = [asdict(p) for p in patch_objects]
     (out / "ym2612_patches.json").write_text(
         json.dumps(patches, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -81,11 +90,13 @@ def extract_vgm_assets(vgm_path: str | Path, out_dir: str | Path) -> dict[str, o
         "vgm": vgm.summary(),
         "assets": {
             "ym2612_patch_count": len(patches),
+            "ym2612_patch_formats": ["json", "tfi", "dmp"],
             "pcm_bank_bytes": len(pcm_bank),
             "dac_timeline_samples": len(dac_audio),
         },
         "notes": [
-            "MIDI cannot preserve native YM2612 operator parameters; keep ym2612_patches.json beside the MIDI export.",
+            "MIDI cannot preserve native YM2612 operator parameters; keep ym2612_patches.json and fm_patches beside the MIDI export.",
+            "TFI is compact but loses AM/FMS/AMS/pan; DMP preserves more YM2612 modulation data but still not stereo pan.",
             "dac_timeline_u8.wav is the digital DAC register stream, not an analog console-emulation render.",
         ],
     }
