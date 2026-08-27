@@ -25,4 +25,4 @@ where = ["src"]
 testpaths = ["tests"]
 
 [tool.setuptools.package-data]
-smd_music = ["*.mjs"]
+smd_music = ["*.mjs", "web/*"]
