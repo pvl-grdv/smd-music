@@ -7,23 +7,17 @@ from dataclasses import asdict
 from pathlib import Path
 
 from .vgm import VgmFile
-from .ym2612 import Ym2612State, patch_to_dmp, patch_to_rym2612, patch_to_tfi
+from .ym2612 import (
+    Ym2612State,
+    group_volume_variants,
+    patch_to_dmp,
+    patch_to_rym2612,
+    patch_to_tfi,
+)
 
 
 def extract_vgm_assets(vgm_path: str | Path, out_dir: str | Path) -> dict[str, object]:
-    """Create an editable-assets pack from a Genesis VGM/VGZ.
-
-    Current assets:
-    - deduplicated YM2612 patch snapshots (JSON), captured at key-on;
-    - plugin/interchange patch files (RYM2612, DMP, TFI);
-    - raw VGM PCM data-bank bytes;
-    - an exact 44.1 kHz unsigned-8-bit DAC register timeline as WAV;
-    - a provenance/manifest JSON.
-
-    The DAC WAV is the digital value stream sent to YM2612 DAC. It is not an
-    analog-model render of a Model 1/2 Mega Drive output stage.
-    """
-
+    """Create an editable-assets pack from a Genesis VGM/VGZ."""
     source = Path(vgm_path)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -68,7 +62,8 @@ def extract_vgm_assets(vgm_path: str | Path, out_dir: str | Path) -> dict[str, o
 
     patch_dir = out / "fm_patches"
     patch_dir.mkdir(exist_ok=True)
-    patch_objects = list(ym.patches.values())
+    raw_patch_objects = list(ym.patches.values())
+    patch_objects = group_volume_variants(raw_patch_objects)
     for index, patch in enumerate(patch_objects, start=1):
         stem = f"{index:02d}_{patch.id}"
         (patch_dir / f"{stem}.tfi").write_bytes(patch_to_tfi(patch))
@@ -92,6 +87,7 @@ def extract_vgm_assets(vgm_path: str | Path, out_dir: str | Path) -> dict[str, o
         },
         "vgm": vgm.summary(),
         "assets": {
+            "ym2612_raw_snapshot_count": len(raw_patch_objects),
             "ym2612_patch_count": len(patches),
             "ym2612_patch_formats": ["json", "tfi", "dmp", "rym2612"],
             "pcm_bank_bytes": len(pcm_bank),
@@ -100,6 +96,7 @@ def extract_vgm_assets(vgm_path: str | Path, out_dir: str | Path) -> dict[str, o
         "notes": [
             "MIDI cannot preserve native YM2612 operator parameters; keep ym2612_patches.json and fm_patches beside the MIDI export.",
             "TFI is compact but loses AM/FMS/AMS/pan; DMP preserves more YM2612 modulation data but still not stereo pan.",
+            "VGM key-on snapshots are grouped by voice identity while ignoring carrier-TL volume variants, FMS/AMS/AM/LFO expression; the loudest variant is exported.",
             "RYM2612 presets are emitted directly as JUCE XML state; no RYMCast dependency is required.",
             "dac_timeline_u8.wav is the digital DAC register stream, not an analog console-emulation render.",
         ],
