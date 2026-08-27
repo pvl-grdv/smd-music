@@ -9,6 +9,7 @@ from .daw_pack import extract_vgm_assets
 from .genesis_rom import GenesisRom
 from .mub import MUB
 from .mucom import MucProject, compile_muc
+from .mucom_voice import MucomVoiceBank
 from .vgm import VgmFile
 
 
@@ -38,17 +39,23 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("muc-info", help="show MUCOM88 source metadata and companion files")
     p.add_argument("muc")
 
-    p = sub.add_parser("muc-compile", help="compile MUC to MUB using installed Open MUCOM88")
+    p = sub.add_parser("muc-compile", help="compile MUC to MUB using Open MUCOM88 or mucom88-js")
     p.add_argument("muc")
     p.add_argument("--output", "-o", required=True)
     p.add_argument("--mucom88")
 
-    p = sub.add_parser("muc-midi", help="compile MUC with Open MUCOM88 and convert to editable MIDI")
+    p = sub.add_parser("muc-midi", help="compile MUC and convert its actual MUCOM sequence to editable MIDI")
     p.add_argument("muc")
     p.add_argument("--output", "-o", required=True)
     p.add_argument("--loops", type=int, default=2)
     p.add_argument("--mucom88")
     p.add_argument("--keep-mub")
+
+    p = sub.add_parser("voice-rym2612", help="convert a MUCOM88 voice.dat bank to native RYM2612 presets")
+    p.add_argument("voice")
+    p.add_argument("--out", "-o", required=True)
+    p.add_argument("--program", type=int, action="append", help="export only this program number; repeatable")
+    p.add_argument("--playable-velocity", action="store_true", help="add carrier velocity sensitivity like mucom88torym2612")
 
     p = sub.add_parser("mub-midi", help="convert compiled MUCOM88 sequence data to editable MIDI")
     p.add_argument("mub")
@@ -89,6 +96,13 @@ def main(argv: list[str] | None = None) -> int:
                 mub_path = Path(tmp) / "source.mub"
                 compile_muc(args.muc, mub_path, executable=args.mucom88)
                 print(MUB.load(mub_path).to_midi(args.output, loops=args.loops))
+    elif args.command == "voice-rym2612":
+        bank = MucomVoiceBank.load(args.voice)
+        programs = set(args.program) if args.program else None
+        written = bank.export_rym2612(
+            args.out, programs=programs, carrier_velocity=args.playable_velocity
+        )
+        _json({"voice_count": len(bank.voices), "exported": len(written), "files": [str(p) for p in written]})
     elif args.command == "mub-midi":
         print(MUB.load(args.mub).to_midi(args.output, loops=args.loops))
     return 0
