@@ -66,6 +66,8 @@ class FmPatch:
     first_seen_sample: int | None = None
     use_count: int = 0
     source_channels: list[int] = field(default_factory=list)
+    lfo_enable: bool = False
+    lfo_frequency: int = 0
 
 
 @dataclass(slots=True)
