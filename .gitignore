@@ -1,0 +1,25 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+
+# User-provided / copyrighted game and music data
+*.bin
+*.gen
+*.smd
+*.rom
+*.vgm
+*.vgz
+*.muc
+*.mub
+*.wav
+*.mid
+*.dmp
+*.tfi
+*.gyb
+out/
+work/
