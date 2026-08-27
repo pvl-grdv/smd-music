@@ -78,6 +78,8 @@ class Ym2612State:
             first_seen_sample=sample,
             use_count=0,
             source_channels=[channel],
+            lfo_enable=bool(self.reg[0][0x22] & 0x08),
+            lfo_frequency=self.reg[0][0x22] & 0x07,
         )
 
     def _record_patch(self, channel: int, sample: int) -> None:
@@ -90,19 +92,17 @@ class Ym2612State:
             existing.use_count += 1
             if channel not in existing.source_channels:
                 existing.source_channels.append(channel)
+            if patch.lfo_enable and not existing.lfo_enable:
+                existing.lfo_enable = True
+                existing.lfo_frequency = patch.lfo_frequency
 
 
 _YM_DT_TO_TFI = {0: 3, 1: 4, 2: 5, 3: 6, 4: 3, 5: 2, 6: 1, 7: 0}
 
 
 def patch_to_tfi(patch: FmPatch) -> bytes:
-    """Serialize a YM2612 patch as a 42-byte TFI instrument.
-
-    TFI stores operators in OPN register-slot order S1,S3,S2,S4. It does not
-    preserve per-operator AM enable, FMS/AMS or stereo pan.
-    """
+    """Serialize a YM2612 patch as a 42-byte TFI instrument."""
     out = bytearray([patch.algorithm & 7, patch.feedback & 7])
-    # patch.operators is already captured in YM register-slot order.
     for op in patch.operators:
         out.extend([
             op.multiple & 0x0F,
@@ -122,20 +122,11 @@ def patch_to_tfi(patch: FmPatch) -> bytes:
 
 
 def patch_to_dmp(patch: FmPatch) -> bytes:
-    """Serialize a YM2612 patch as DefleMask DMP v10 FM preset.
-
-    DMP preserves FMS, AMS and per-operator AM in addition to the core FM
-    envelope parameters. Stereo pan is not part of the DMP FM preset format.
-    """
+    """Serialize a YM2612 patch as DefleMask DMP v10 FM preset."""
     out = bytearray([
-        0x0A,  # DMP file version
-        0x01,  # FM instrument
-        patch.fms & 7,
-        patch.feedback & 7,
-        patch.algorithm & 7,
-        patch.ams & 3,
+        0x0A, 0x01, patch.fms & 7, patch.feedback & 7,
+        patch.algorithm & 7, patch.ams & 3,
     ])
-    # DMP operator lists are logical operator 1..4.
     for op in sorted(patch.operators, key=lambda item: item.logical_operator):
         out.extend([
             op.multiple & 0x0F,
@@ -154,13 +145,10 @@ def patch_to_dmp(patch: FmPatch) -> bytes:
 
 
 _RYM_DT_FROM_YM = {0: 0, 1: 1, 2: 2, 3: 3, 4: 0, 5: -1, 6: -2, 7: -3}
-# RYM2612 stores MUL on a quasi-frequency scale, not as the raw OPN nibble.
-# Values match the long-standing mucom88torym2612 converter.
 _RYM_MULS = [
     0, 1054, 1581, 2635, 3689, 4743, 5797, 6851,
     7905, 8959, 10013, 10540, 11594, 12648, 14229, 15000,
 ]
-# YM2612 carrier operators for algorithms 0..7, logical OP1..OP4.
 _RYM_CARRIERS = [
     (False, False, False, True),
     (False, False, False, True),
@@ -180,18 +168,7 @@ def patch_to_rym2612(
     category: str = "Video Games",
     carrier_velocity: bool = False,
 ) -> bytes:
-    """Serialize an FM patch as a native RYM2612 ``.rym2612`` preset.
-
-    RYM2612 presets are JUCE XML state files. The parameter names/layout here
-    follow the MIT-licensed ``but80/mucom88torym2612`` converter and are also
-    compatible with the parser in ``ulalume/ym2612_format``.
-
-    ``carrier_velocity=False`` is deliberate for extracted game patches: Sega
-    hardware has no MIDI velocity, so the exact YM2612 TL is kept in OPxTL and
-    OPxVel is zero. Set it to true to mimic the historical MUCOM->RYM2612
-    converter, which moves half of each carrier's output level into velocity
-    sensitivity for a more playable preset.
-    """
+    """Serialize an FM patch as a native RYM2612 ``.rym2612`` preset."""
     from xml.sax.saxutils import escape, quoteattr
 
     patch_name = name or patch.id
@@ -232,8 +209,6 @@ def patch_to_rym2612(
             for param, value in values
         ]
 
-    # Native presets interleave OP4..OP1 parameter-by-parameter. Lookup is by
-    # id, but preserving that ordering makes generated files diff-friendly.
     for row in range(len(op_lines[1])):
         for logical in (4, 3, 2, 1):
             lines.append(op_lines[logical][row])
@@ -247,10 +222,8 @@ def patch_to_rym2612(
         '  <PARAM id="Spec_Mode" value="2.0"/>',
         '  <PARAM id="Pitchbend_Range" value="2.0"/>',
         '  <PARAM id="Legato_Retrig" value="0.0"/>',
-        '  <PARAM id="LFO_Speed" value="2.0"/>',
-        # FMS/AMS sensitivity does not prove global YM2612 LFO register 0x22
-        # was enabled for the whole song, so default to disabled.
-        '  <PARAM id="LFO_Enable" value="0.0"/>',
+        f'  <PARAM id="LFO_Speed" value="{float(patch.lfo_frequency & 7):.1f}"/>',
+        f'  <PARAM id="LFO_Enable" value="{1.0 if patch.lfo_enable else 0.0:.1f}"/>',
         f'  <PARAM id="Feedback" value="{float(patch.feedback & 7):.1f}"/>',
         '  <PARAM id="FMSMW" value="100.0"/>',
         f'  <PARAM id="FMS" value="{float(patch.fms & 7):.1f}"/>',
@@ -262,3 +235,75 @@ def patch_to_rym2612(
         '',
     ])
     return "\n".join(lines).encode("utf-8")
+
+
+def _carrier_mask(algorithm: int) -> int:
+    return (0x8, 0x8, 0x8, 0x8, 0xC, 0xE, 0xE, 0xF)[algorithm & 7]
+
+
+def same_instrument_ignoring_volume(a: FmPatch, b: FmPatch) -> bool:
+    """Match VGM snapshots as one voice while ignoring performance volume."""
+    if a.algorithm != b.algorithm or a.feedback != b.feedback:
+        return False
+    carriers = _carrier_mask(a.algorithm)
+    for slot, (oa, ob) in enumerate(zip(a.operators, b.operators)):
+        if not (carriers & (1 << slot)) and oa.total_level != ob.total_level:
+            return False
+        if (
+            oa.attack_rate != ob.attack_rate
+            or oa.decay_rate != ob.decay_rate
+            or oa.sustain_rate != ob.sustain_rate
+            or oa.release_rate != ob.release_rate
+            or oa.sustain_level != ob.sustain_level
+            or oa.multiple != ob.multiple
+            or oa.detune != ob.detune
+            or oa.ssg_eg != ob.ssg_eg
+            or oa.rate_scale != ob.rate_scale
+        ):
+            return False
+    return True
+
+
+def patch_loudness(patch: FmPatch) -> int:
+    carriers = _carrier_mask(patch.algorithm)
+    return sum(
+        127 - op.total_level
+        for slot, op in enumerate(patch.operators)
+        if carriers & (1 << slot)
+    )
+
+
+def group_volume_variants(patches: list[FmPatch]) -> list[FmPatch]:
+    """Collapse VGM key-on snapshots to one loudest representative per voice."""
+    groups: list[dict[str, object]] = []
+    for patch in patches:
+        match = None
+        for group in groups:
+            if same_instrument_ignoring_volume(group["best"], patch):  # type: ignore[arg-type]
+                match = group
+                break
+        loudness = patch_loudness(patch)
+        if match is None:
+            groups.append({
+                "best": patch,
+                "loudness": loudness,
+                "use_count": patch.use_count,
+                "channels": set(patch.source_channels),
+            })
+        else:
+            match["use_count"] = int(match["use_count"]) + patch.use_count
+            match["channels"].update(patch.source_channels)  # type: ignore[union-attr]
+            if loudness > int(match["loudness"]):
+                match["best"] = patch
+                match["loudness"] = loudness
+
+    result: list[FmPatch] = []
+    for group in groups:
+        if int(group["loudness"]) <= 0:
+            continue
+        best = group["best"]
+        assert isinstance(best, FmPatch)
+        best.use_count = int(group["use_count"])
+        best.source_channels = sorted(group["channels"])  # type: ignore[arg-type]
+        result.append(best)
+    return result
