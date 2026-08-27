@@ -90,3 +90,62 @@ class Ym2612State:
             existing.use_count += 1
             if channel not in existing.source_channels:
                 existing.source_channels.append(channel)
+
+
+_YM_DT_TO_TFI = {0: 3, 1: 4, 2: 5, 3: 6, 4: 3, 5: 2, 6: 1, 7: 0}
+
+
+def patch_to_tfi(patch: FmPatch) -> bytes:
+    """Serialize a YM2612 patch as a 42-byte TFI instrument.
+
+    TFI stores operators in OPN register-slot order S1,S3,S2,S4. It does not
+    preserve per-operator AM enable, FMS/AMS or stereo pan.
+    """
+    out = bytearray([patch.algorithm & 7, patch.feedback & 7])
+    for op in patch.operators:
+        out.extend([
+            op.multiple & 0x0F,
+            _YM_DT_TO_TFI[op.detune & 7],
+            op.total_level & 0x7F,
+            op.rate_scale & 3,
+            op.attack_rate & 0x1F,
+            op.decay_rate & 0x1F,
+            op.sustain_rate & 0x1F,
+            op.release_rate & 0x0F,
+            op.sustain_level & 0x0F,
+            op.ssg_eg & 0x0F,
+        ])
+    if len(out) != 42:
+        raise AssertionError(len(out))
+    return bytes(out)
+
+
+def patch_to_dmp(patch: FmPatch) -> bytes:
+    """Serialize a YM2612 patch as DefleMask DMP v10 FM preset.
+
+    DMP preserves FMS, AMS and per-operator AM in addition to the core FM
+    envelope parameters. Stereo pan is not part of the DMP FM preset format.
+    """
+    out = bytearray([
+        0x0A,
+        0x01,
+        patch.fms & 7,
+        patch.feedback & 7,
+        patch.algorithm & 7,
+        patch.ams & 3,
+    ])
+    for op in sorted(patch.operators, key=lambda item: item.logical_operator):
+        out.extend([
+            op.multiple & 0x0F,
+            op.total_level & 0x7F,
+            op.attack_rate & 0x1F,
+            op.decay_rate & 0x1F,
+            op.sustain_level & 0x0F,
+            op.release_rate & 0x0F,
+            op.am_enable & 1,
+            op.rate_scale & 3,
+            op.detune & 7,
+            op.sustain_rate & 0x1F,
+            op.ssg_eg & 0x0F,
+        ])
+    return bytes(out)
