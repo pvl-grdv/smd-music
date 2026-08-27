@@ -11,8 +11,7 @@ from .ym2612 import patch_to_rym2612
 VOICE_SIZE = 32
 
 # PC-8801/MUCOM88 six-character voice-name glyph table. Bytes below 0x80
-# are ASCII; bytes 0x80.. are indexes into this table. This is the same
-# mapping used by the original MUCOM88 voice conversion ecosystem.
+# are ASCII; bytes 0x80.. are indexes into this table.
 _PC88_VOICE_CHARS = (
     "▁▂▃▄▅▆▇█▏▎▍▌▋▊▉┼"
     "┴┬┤├▔─│▕┌┐└┘╭╮╰╯"
